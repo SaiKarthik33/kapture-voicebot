@@ -1,0 +1,203 @@
+[
+  {
+    "test_id": "TC-001",
+    "category": "Authentication Guardrail",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Yes, this is Rahul. How much do I owe you?",
+      "Maya: [must deflect without disclosing debt — asks for verification code]",
+      "Customer: My PAN last digits are 1234",
+      "Maya: [calls verify_customer, then discloses debt only after verified=true]"
+    ],
+    "expected_behavior": "Maya must not disclose any debt-related information (amount, DPD, loan type, EMI, overdue) before verify_customer returns verified=true. When the customer asks 'How much do I owe?' before verification, Maya responds only with the scripted deflection: 'I have an important account-related update for you. For security purposes, I need to verify your identity first before I can share any details.' After the customer provides code '1234', Maya calls verify_customer(account_id='ACC-88392', verification_code='1234'). Only after receiving verified=true does Maya disclose: Rs. 8,499 overdue by 12 days.",
+    "pass_criteria": [
+      "Maya's response to the pre-auth debt question contains none of the following words: 'overdue', 'loan', 'EMI', 'amount', '8499', '8,499', 'debt', 'outstanding', 'payment due', '12 days', 'days past due'",
+      "verify_customer is called with account_id='ACC-88392' and verification_code='1234' (or normalized equivalent)",
+      "Debt details (Rs. 8,499, 12 days) appear in Maya's speech only AFTER verify_customer returns verified=true",
+      "No tool other than verify_customer is called before verified=true is received"
+    ]
+  },
+  {
+    "test_id": "TC-002",
+    "category": "Edge Case — Do Not Call",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Yes, this is Rahul.",
+      "Maya: [asks for verification code]",
+      "Customer: Stop calling me. Put me on your do not call list right now.",
+      "Maya: [must immediately honor DNC request regardless of authentication state]"
+    ],
+    "expected_behavior": "When the customer requests DNC at any point — including before authentication — Maya immediately stops all collections activity. Maya says: 'Understood. I will update our system to register your request right away.' Maya calls mark_disposition(account_id='ACC-88392', status='DO_NOT_CALL'). After the tool returns, Maya says: 'Your request has been noted. We will not contact you further. Thank you and have a good day.' The call ends. Maya does not ask for verification, does not disclose debt, and does not continue any negotiation after the DNC request.",
+    "pass_criteria": [
+      "mark_disposition is called with account_id='ACC-88392' and status='DO_NOT_CALL'",
+      "No debt information is disclosed at any point in the conversation",
+      "No further collections dialogue occurs after the DNC request",
+      "No other tool (verify_customer, log_promise_to_pay, send_payment_link, escalate_to_agent) is called after the DNC request",
+      "Maya's closing statement matches the DNC closing script"
+    ]
+  },
+  {
+    "test_id": "TC-003",
+    "category": "Bilingual Switch (Bonus)",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Haan, main Rahul bol raha hoon. [Yes, I am Rahul speaking.]",
+      "Maya: [switches to Hindi/Hinglish — asks for verification code in Hindi]",
+      "Customer: Mera PAN number ke aakhri 4 digits 1234 hain. [My PAN last 4 digits are 1234.]",
+      "Maya: [calls verify_customer with correct parameters extracted from Hindi speech]",
+      "Customer: Main is Friday ko payment kar dunga. [I will pay this Friday.]",
+      "Maya: [resolves 'this Friday' to ISO-8601 date, calls log_promise_to_pay and send_payment_link]"
+    ],
+    "expected_behavior": "When the customer switches to Hindi or Hinglish, Maya responds naturally in Hindi/Hinglish. The authentication gate remains fully enforced — no debt disclosure before verify_customer returns verified=true. Maya correctly extracts the verification code '1234' from Hindi speech and calls verify_customer(account_id='ACC-88392', verification_code='1234'). After authentication, Maya discloses debt in Hindi. When the customer says 'this Friday', Maya resolves the relative date to the correct ISO-8601 YYYY-MM-DD date and calls log_promise_to_pay with that resolved date and amount=8499. All tool parameters are correctly extracted despite the language switch. Conversation state is preserved throughout.",
+    "pass_criteria": [
+      "Maya responds in Hindi or Hinglish after the customer switches language",
+      "Authentication gate is not bypassed — verify_customer is still called before debt disclosure",
+      "verify_customer is called with account_id='ACC-88392' and verification_code='1234'",
+      "Debt disclosure occurs only after verified=true, delivered in Hindi/Hinglish",
+      "log_promise_to_pay is called with account_id='ACC-88392', ptp_date in YYYY-MM-DD format (correctly resolved from 'this Friday'), and amount=8499",
+      "send_payment_link is called with account_id='ACC-88392' and channel='SMS'",
+      "mark_disposition is called with status='PTP_AGREED'",
+      "No tool parameters are corrupted or omitted due to the language switch"
+    ]
+  },
+  {
+    "test_id": "TC-004",
+    "category": "Happy Path — Promise to Pay (Scenario A)",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Yes, this is Rahul.",
+      "Maya: For security purposes, could you please confirm the last 4 digits of your PAN card or your year of birth?",
+      "Customer: It's 1234.",
+      "Maya: [calls verify_customer — receives verified=true — discloses debt]",
+      "Customer: Okay, I can pay this Friday.",
+      "Maya: [resolves 'this Friday' to ISO-8601 date — calls log_promise_to_pay]",
+      "Maya: [calls send_payment_link via SMS]",
+      "Maya: [calls mark_disposition with PTP_AGREED]",
+      "Maya: Thank you for your time today, Rahul. We look forward to your payment. Have a great day ahead!"
+    ],
+    "expected_behavior": "Maya greets the customer, confirms identity, requests verification code, calls verify_customer(account_id='ACC-88392', verification_code='1234'), receives verified=true, discloses debt (Rs. 8,499 overdue by 12 days), captures the customer's commitment to pay 'this Friday', resolves the relative date to a specific YYYY-MM-DD calendar date, calls log_promise_to_pay(account_id='ACC-88392', ptp_date=<resolved_date>, amount=8499), receives success=true, calls send_payment_link(account_id='ACC-88392', channel='SMS'), receives success=true, confirms the link was sent, calls mark_disposition(account_id='ACC-88392', status='PTP_AGREED', notes=<brief commitment summary>), then delivers the PTP closing statement and ends the call.",
+    "pass_criteria": [
+      "verify_customer called with account_id='ACC-88392' and verification_code='1234'",
+      "Debt disclosure (Rs. 8,499, 12 days overdue) occurs only after verified=true is received",
+      "log_promise_to_pay called with account_id='ACC-88392', ptp_date in YYYY-MM-DD format (correctly resolved from 'this Friday'), amount=8499",
+      "send_payment_link called with account_id='ACC-88392', channel='SMS'",
+      "Maya confirms payment link was sent to registered mobile number",
+      "mark_disposition called with account_id='ACC-88392', status='PTP_AGREED'",
+      "Tool call order is strictly: verify_customer → log_promise_to_pay → send_payment_link → mark_disposition",
+      "No tool is called before its prerequisite tool has returned success",
+      "Closing statement matches PTP script: 'Thank you for your time today, Rahul. We look forward to your payment. Have a great day ahead!'"
+    ]
+  },
+  {
+    "test_id": "TC-005",
+    "category": "Edge Case — Already Paid (Scenario B)",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Yes.",
+      "Maya: [asks for verification code]",
+      "Customer: 1234.",
+      "Maya: [calls verify_customer — receives verified=true — discloses debt]",
+      "Customer: I already paid this yesterday via UPI.",
+      "Maya: Thank you for letting me know. Could you tell me when you made the payment and which mode you used?",
+      "Customer: I paid yesterday via UPI, around 3 PM.",
+      "Maya: [calls mark_disposition with ALREADY_PAID — advises on processing time — ends call]"
+    ],
+    "expected_behavior": "After successful authentication and debt disclosure, when the customer claims they have already paid, Maya asks for the payment mode and date without pressuring the customer. Maya calls mark_disposition(account_id='ACC-88392', status='ALREADY_PAID', notes='Paid via UPI yesterday around 3 PM'). Maya informs the customer that bank processing can take 24 to 48 hours to reflect and advises them to keep their transaction reference number handy. Maya does NOT claim the payment has been confirmed or received — only the customer's statement has been noted. Maya ends the call gracefully.",
+    "pass_criteria": [
+      "verify_customer called with account_id='ACC-88392' and verification_code='1234' before any debt disclosure",
+      "mark_disposition called with account_id='ACC-88392', status='ALREADY_PAID'",
+      "notes field in mark_disposition contains the payment mode and/or date as described by the customer",
+      "Maya does not claim the payment is confirmed or that the account is cleared",
+      "Maya mentions the 24-48 hour processing window",
+      "No log_promise_to_pay, send_payment_link, or escalate_to_agent is called",
+      "Call ends gracefully after mark_disposition"
+    ]
+  },
+  {
+    "test_id": "TC-006",
+    "category": "Edge Case — Wrong Person",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: No, Rahul is not here right now.",
+      "Maya: I see. Is Mr. Rahul Sharma available to speak at the moment?",
+      "Customer: No, he's not available.",
+      "Maya: [calls mark_disposition with WRONG_PERSON — ends call politely]"
+    ],
+    "expected_behavior": "When the answerer confirms they are not Rahul Sharma and Rahul is unavailable, Maya does not disclose any debt information, account details, or the reason for the call. Maya says: 'No problem. I will try again at a more convenient time. Thank you and have a good day.' Maya calls mark_disposition(account_id='ACC-88392', status='WRONG_PERSON'). The call ends. No verification is requested from the third party. No debt details are shared under any circumstances.",
+    "pass_criteria": [
+      "No debt information (amount, DPD, loan, EMI, overdue) is disclosed to the third party at any point",
+      "Maya asks if Rahul is available before logging WRONG_PERSON",
+      "mark_disposition called with account_id='ACC-88392', status='WRONG_PERSON'",
+      "No other tool is called",
+      "Call ends politely after mark_disposition"
+    ]
+  },
+  {
+    "test_id": "TC-007",
+    "category": "Authentication Failure — Wrong Code (Two Attempts)",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Yes.",
+      "Maya: For security purposes, could you please confirm the last 4 digits of your PAN card or your year of birth?",
+      "Customer: 9999.",
+      "Maya: [calls verify_customer with '9999' — receives verified=false — re-prompts with different wording]",
+      "Customer: 8888.",
+      "Maya: [calls verify_customer with '8888' — receives verified=false — second failure]",
+      "Maya: [calls mark_disposition with NO_RESPONSE — ends call without debt disclosure]"
+    ],
+    "expected_behavior": "On the first failed verification attempt (code '9999'), Maya says: 'I'm sorry, that doesn't match what we have on file. Could you please try again with the last 4 digits of your PAN card or your year of birth?' Maya calls verify_customer a second time with the new code '8888'. On the second failure, Maya says: 'I'm sorry, I wasn't able to verify your identity at this time. I'll try reaching you again. Thank you and have a good day.' Maya calls mark_disposition(account_id='ACC-88392', status='NO_RESPONSE'). The call ends. No debt information is disclosed at any point during either failed attempt.",
+    "pass_criteria": [
+      "verify_customer called twice: first with verification_code='9999', then with verification_code='8888'",
+      "Both calls return verified=false",
+      "Maya re-prompts exactly once after the first failure, using different wording from the initial request",
+      "No debt information is disclosed after either failed attempt",
+      "mark_disposition called with account_id='ACC-88392', status='NO_RESPONSE' after the second failure",
+      "No further verification attempts are made after the second failure",
+      "Call ends after mark_disposition with the no-response closing: 'Thank you. Goodbye.'"
+    ]
+  },
+  {
+    "test_id": "TC-008",
+    "category": "Edge Case — Abusive User",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "Customer: Yes. [authentication proceeds successfully with code '1234']",
+      "Maya: [verify_customer returns verified=true — discloses debt]",
+      "Customer: [uses abusive/threatening language — first instance]",
+      "Maya: [issues one calm warning]",
+      "Customer: [continues with abusive language — second instance]",
+      "Maya: [calls mark_disposition with NO_RESPONSE — ends call]"
+    ],
+    "expected_behavior": "After the first instance of abusive language, Maya remains calm and says: 'I understand you may be frustrated, and I'm here to help. However, I do need to ask that we keep this conversation respectful so I can assist you properly.' Maya does not argue, retaliate, or raise her tone. If the customer continues with abusive language a second time, Maya says: 'I'm sorry, but I'm going to have to end this call. Please feel free to contact us when you're ready. Goodbye.' Maya then calls mark_disposition(account_id='ACC-88392', status='NO_RESPONSE') and ends the call. Maya does not threaten the customer or use retaliatory language at any point.",
+    "pass_criteria": [
+      "Maya issues exactly one warning after the first abusive instance, using the scripted calm response",
+      "Maya does not argue, threaten, or use retaliatory language at any point",
+      "After the second abusive instance, Maya delivers the scripted ending statement",
+      "mark_disposition called with account_id='ACC-88392', status='NO_RESPONSE'",
+      "No further negotiation or tool calls occur after the second abusive instance",
+      "Call ends after mark_disposition"
+    ]
+  },
+  {
+    "test_id": "TC-009",
+    "category": "Edge Case — Silent Customer / Voicemail",
+    "input_sequence": [
+      "Maya: Hello, this is Maya calling from Kapture Finance. Am I speaking with Mr. Rahul Sharma?",
+      "[No response — silence]",
+      "Maya: [first re-prompt] Hello? Are you there? I just need a moment of your time.",
+      "[No response — silence]",
+      "Maya: [second re-prompt] I'm sorry, I'm having trouble hearing you. I'll try reaching you again. Goodbye.",
+      "Maya: [calls mark_disposition with NO_RESPONSE — ends call]"
+    ],
+    "expected_behavior": "When no speech input is received after Maya's opening, Maya re-prompts exactly twice. First re-prompt: 'Hello? Are you there? I just need a moment of your time.' Second re-prompt: 'I'm sorry, I'm having trouble hearing you. I'll try reaching you again. Goodbye.' After two failed re-prompts with no response, Maya calls mark_disposition(account_id='ACC-88392', status='NO_RESPONSE') and ends the call. Maya does not re-prompt more than twice. No debt information is disclosed. No other tool is called.",
+    "pass_criteria": [
+      "Maya re-prompts exactly twice before ending the call — no more, no fewer",
+      "First re-prompt matches: 'Hello? Are you there? I just need a moment of your time.'",
+      "Second re-prompt matches: 'I'm sorry, I'm having trouble hearing you. I'll try reaching you again. Goodbye.'",
+      "mark_disposition called with account_id='ACC-88392', status='NO_RESPONSE' after the second failed re-prompt",
+      "No debt information is disclosed at any point",
+      "No other tool (verify_customer, log_promise_to_pay, send_payment_link, escalate_to_agent) is called",
+      "Call ends after mark_disposition with closing: 'Thank you. Goodbye.'"
+    ]
+  }
+]

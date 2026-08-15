@@ -1,0 +1,122 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "verify_customer",
+      "description": "Verifies the caller's identity before any debt information is disclosed. Call this in STATE 1 with the code spoken by the customer. The response field 'verified' is a hard gate — do NOT disclose any debt details or transition to STATE 2 unless verified is true.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "The customer's unique account identifier. Always use ACC-88392 for this session."
+          },
+          "verification_code": {
+            "type": "string",
+            "description": "The code spoken by the customer — either the last 4 digits of their PAN card or their 4-digit year of birth."
+          }
+        },
+        "required": ["account_id", "verification_code"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "log_promise_to_pay",
+      "description": "Records the customer's commitment to pay the overdue amount by a specific date. Call this in STATE 3 Branch A after the customer agrees to pay. Resolve any relative date (e.g. 'this Friday', 'tomorrow') to ISO-8601 format before calling.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "The customer's unique account identifier. Always use ACC-88392 for this session."
+          },
+          "ptp_date": {
+            "type": "string",
+            "description": "The date the customer committed to pay, in ISO-8601 format YYYY-MM-DD, e.g. 2026-08-14."
+          },
+          "amount": {
+            "type": "number",
+            "description": "The amount the customer agreed to pay in INR. Default to 8499 unless the customer explicitly negotiates a different amount."
+          }
+        },
+        "required": ["account_id", "ptp_date", "amount"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_payment_link",
+      "description": "Dispatches an instant payment link to the customer's registered mobile number via the specified channel. Call this in STATE 3 Branch A immediately after log_promise_to_pay succeeds.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "The customer's unique account identifier. Always use ACC-88392 for this session."
+          },
+          "channel": {
+            "type": "string",
+            "description": "The delivery channel for the payment link. Default to SMS unless the customer requests WhatsApp or both.",
+            "enum": ["SMS", "WhatsApp", "BOTH"]
+          }
+        },
+        "required": ["account_id", "channel"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mark_disposition",
+      "description": "Logs the final outcome of the call. MUST be called in every terminal path before ending the call — PTP agreed, already paid, DNC, wrong person, escalation, and no response. Never end the call without calling this tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "The customer's unique account identifier. Always use ACC-88392 for this session."
+          },
+          "status": {
+            "type": "string",
+            "description": "The final call outcome to log. PTP_AGREED: customer committed to pay. ALREADY_PAID: customer claims payment was made. DISPUTED: customer contests the debt. HARDSHIP_ESCALATED: escalated due to financial hardship. WRONG_PERSON: answerer is not the target customer. DO_NOT_CALL: customer requested opt-out. NO_RESPONSE: no input received or auth failed twice.",
+            "enum": [
+              "PTP_AGREED",
+              "ALREADY_PAID",
+              "DISPUTED",
+              "HARDSHIP_ESCALATED",
+              "WRONG_PERSON",
+              "DO_NOT_CALL",
+              "NO_RESPONSE"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional free-text context about the outcome, e.g. payment mode mentioned, dispute reason, or hardship details."
+          }
+        },
+        "required": ["account_id", "status"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "escalate_to_agent",
+      "description": "Transfers the call to a human collections agent when the customer reports financial hardship or disputes the debt. Call this in STATE 3 Branch C (hardship) or Branch D (dispute). After this tool returns, you must still call mark_disposition with HARDSHIP_ESCALATED or DISPUTED before ending the call.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "The reason for escalating to a human agent. Use HARDSHIP_REQUEST when the customer cannot pay due to financial difficulty. Use DISPUTE when the customer does not recognise or contests the debt amount.",
+            "enum": ["HARDSHIP_REQUEST", "DISPUTE"]
+          }
+        },
+        "required": ["reason"]
+      }
+    }
+  }
+]

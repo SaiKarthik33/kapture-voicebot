@@ -1,0 +1,89 @@
+sequenceDiagram
+    autonumber
+    actor Customer
+    participant Tel as Telephony / SIP / PSTN
+    participant Vapi as Vapi Voice Engine
+    participant STT as Deepgram Nova-2 (STT)
+    participant LLM as GPT-4o Orchestrator
+    participant API as Mock Webhook API<br/>POST /webhook
+    participant TTS as ElevenLabs / Cartesia (TTS)
+
+    Customer->>Tel: Answers outbound call
+    Tel->>Vapi: Stream audio (SIP/PSTN)
+    Vapi->>STT: Real-time audio stream
+    STT-->>Vapi: Transcribed text
+
+    rect rgb(245, 245, 245)
+        note over Vapi,LLM: STATE: INIT → AUTH_PENDING
+        Vapi->>LLM: Transcript + system prompt
+        LLM-->>Vapi: "Hello, this is Maya... Am I speaking with Mr. Rahul Sharma?"
+        Vapi->>TTS: Synthesize greeting
+        TTS-->>Customer: Play audio
+    end
+
+    rect rgb(255, 235, 235)
+        note over Vapi,API: AUTH PHASE — No debt disclosed before verified=true
+        Customer->>Vapi: "Yes, this is Rahul"
+        Vapi->>STT: Audio stream
+        STT-->>Vapi: Transcript
+        Vapi->>LLM: Transcript
+        LLM-->>Vapi: "Please confirm last 4 digits of PAN or year of birth"
+        Vapi->>TTS: Synthesize
+        TTS-->>Customer: Play audio
+
+        Customer->>Vapi: Speaks verification code (e.g. "1 2 3 4")
+        Vapi->>STT: Audio stream
+        STT-->>Vapi: Transcript ("1 2 3 4")
+        Vapi->>LLM: Transcript
+        LLM->>API: verify_customer(account_id="ACC-88392", verification_code="1234")
+        API-->>LLM: verified=true
+
+        note over LLM,API: ✅ AUTH GATE PASSED — verified=true<br/>Transition: AUTH_PENDING → AUTHENTICATED
+    end
+
+    rect rgb(220, 245, 220)
+        note over Vapi,API: STATE: AUTHENTICATED → NEGOTIATION<br/>Debt disclosure now permitted
+        LLM-->>Vapi: "Rs. 8,499 overdue by 12 days. Can you pay today?"
+        Vapi->>TTS: Synthesize debt disclosure
+        TTS-->>Customer: Play audio
+    end
+
+    rect rgb(210, 235, 255)
+        note over Vapi,API: BRANCH A — Promise to Pay (PTP)
+        Customer->>Vapi: "I will pay this Friday"
+        Vapi->>LLM: Transcript
+        LLM->>API: log_promise_to_pay(account_id, ptp_date="YYYY-MM-DD", amount=8499)
+        API-->>LLM: success=true, ptp_id="PTP-XXXX"
+        LLM->>API: send_payment_link(account_id, channel="SMS")
+        API-->>LLM: success=true
+        LLM->>API: mark_disposition(account_id, status="PTP_AGREED")
+        API-->>LLM: success=true
+        LLM-->>Vapi: "Payment link sent. Thank you, Rahul. Have a great day!"
+        Vapi->>TTS: Synthesize closing
+        TTS-->>Customer: Play audio — CALL_ENDED
+    end
+
+    rect rgb(255, 245, 210)
+        note over LLM,API: BRANCH B — Already Paid
+        note over LLM,API: mark_disposition(status="ALREADY_PAID") → CALL_ENDED
+    end
+
+    rect rgb(255, 225, 200)
+        note over LLM,API: BRANCH C — Financial Hardship
+        note over LLM,API: escalate_to_agent(reason="HARDSHIP_REQUEST")<br/>mark_disposition(status="HARDSHIP_ESCALATED") → CALL_ENDED
+    end
+
+    rect rgb(255, 210, 210)
+        note over LLM,API: BRANCH D — Dispute
+        note over LLM,API: escalate_to_agent(reason="DISPUTE")<br/>mark_disposition(status="DISPUTED") → CALL_ENDED
+    end
+
+    rect rgb(230, 215, 255)
+        note over LLM,API: BRANCH E — Do Not Call (immediate priority, any state)
+        note over LLM,API: mark_disposition(status="DO_NOT_CALL") → CALL_ENDED
+    end
+
+    rect rgb(220, 220, 220)
+        note over LLM,API: BRANCH F — Wrong Person / Auth Failure / No Response
+        note over LLM,API: mark_disposition(status="WRONG_PERSON" | "NO_RESPONSE") → CALL_ENDED
+    end
